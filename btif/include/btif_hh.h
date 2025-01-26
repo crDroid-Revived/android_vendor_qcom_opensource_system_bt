@@ -54,7 +54,7 @@
  *  Type definitions and return values
  ******************************************************************************/
 
-typedef enum {
+typedef enum : unsigned {
   BTIF_HH_DISABLED = 0,
   BTIF_HH_ENABLED,
   BTIF_HH_DISABLING,
@@ -63,6 +63,25 @@ typedef enum {
   BTIF_HH_DEV_CONNECTED,
   BTIF_HH_DEV_DISCONNECTED
 } BTIF_HH_STATUS;
+
+#define CASE_RETURN_TEXT(code) \
+  case code:                   \
+    return #code
+
+inline std::string btif_hh_status_text(const BTIF_HH_STATUS& status) {
+  switch (status) {
+    CASE_RETURN_TEXT(BTIF_HH_DISABLED);
+    CASE_RETURN_TEXT(BTIF_HH_ENABLED);
+    CASE_RETURN_TEXT(BTIF_HH_DISABLING);
+    CASE_RETURN_TEXT(BTIF_HH_DEV_UNKNOWN);
+    CASE_RETURN_TEXT(BTIF_HH_DEV_CONNECTING);
+    CASE_RETURN_TEXT(BTIF_HH_DEV_CONNECTED);
+    CASE_RETURN_TEXT(BTIF_HH_DEV_DISCONNECTED);
+    default:
+      return std::string("UNKNOWN[%hhu]", status);
+  }
+}
+#undef CASE_RETURN_TEXT
 
 typedef struct {
   bthh_connection_state_t dev_status;
@@ -94,6 +113,7 @@ typedef struct {
   uint8_t dev_handle;
   RawAddress bd_addr;
   tBTA_HH_ATTR_MASK attr_mask;
+  bool reconnect_allowed;
 } btif_hh_added_device_t;
 
 /**
@@ -118,7 +138,8 @@ extern btif_hh_cb_t btif_hh_cb;
 extern btif_hh_device_t* btif_hh_find_connected_dev_by_handle(uint8_t handle);
 extern void btif_hh_remove_device(RawAddress bd_addr);
 extern bool btif_hh_add_added_dev(const RawAddress& bda,
-                                  tBTA_HH_ATTR_MASK attr_mask);
+                                  tBTA_HH_ATTR_MASK attr_mask,
+                                  bool reconnect_allowed);
 extern bt_status_t btif_hh_virtual_unplug(const RawAddress* bd_addr);
 extern void btif_hh_disconnect(RawAddress* bd_addr);
 extern void btif_hh_service_registration(bool enable);

@@ -21,7 +21,7 @@
  *  this file contains the GATT server functions
  *
  ******************************************************************************/
-
+#include <algorithm>
 #include "bt_target.h"
 #include "bt_utils.h"
 #include "osi/include/osi.h"
@@ -136,6 +136,14 @@ static bool process_read_multi_rsp(tGATT_SR_CMD* p_cmd, tGATT_STATUS status,
     /* Wait till we get all the responses */
     if (fixed_queue_length(p_cmd->multi_rsp_q) ==
         p_cmd->multi_req.num_handles) {
+
+      // We need at least one extra byte for the opcode
+      if (mtu == 0) {
+        LOG(ERROR) << "Invalid MTU";
+        p_cmd->status = GATT_ILLEGAL_PARAMETER;
+        return (true);
+      }
+
       len = sizeof(BT_HDR) + L2CAP_MIN_OFFSET + mtu;
       p_buf = (BT_HDR*)osi_calloc(len);
       p_buf->offset = L2CAP_MIN_OFFSET;
@@ -163,9 +171,21 @@ static bool process_read_multi_rsp(tGATT_SR_CMD* p_cmd, tGATT_STATUS status,
         }
 
         if (p_rsp != NULL) {
-          total_len = (p_buf->len + p_rsp->attr_value.len);
+          total_len = p_buf->len;
 
           if (total_len > mtu) {
+            VLOG(1) << "Buffer space not enough for this data item, skipping";
+            break;
+          }
+
+          len = std::min((size_t) p_rsp->attr_value.len, mtu - total_len);
+
+          if (total_len == mtu && p_rsp->attr_value.len > 0) {
+            VLOG(1) << "Buffer space not enough for this data item, skipping";
+            break;
+          }
+
+          if (len < p_rsp->attr_value.len) {
             /* just send the partial response for the overflow case */
             len = p_rsp->attr_value.len - (total_len - mtu);
             is_overflow = true;
@@ -177,15 +197,8 @@ static bool process_read_multi_rsp(tGATT_SR_CMD* p_cmd, tGATT_STATUS status,
           }
 
           if (p_rsp->attr_value.handle == p_cmd->multi_req.handles[ii]) {
-            // check for possible integer overflow
-            if (p_buf->len + len <= UINT16_MAX) {
-              memcpy(p, p_rsp->attr_value.value, len);
-              if (!is_overflow) p += len;
-              p_buf->len += len;
-            } else {
-              p_cmd->status = GATT_NOT_FOUND;
-              break;
-            }
+            ARRAY_TO_STREAM(p, p_rsp->attr_value.value, (uint16_t) len);
+            p_buf->len += (uint16_t) len;
           } else {
             p_cmd->status = GATT_NOT_FOUND;
             break;
