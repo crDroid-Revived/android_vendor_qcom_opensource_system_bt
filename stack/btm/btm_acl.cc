@@ -31,6 +31,8 @@
  *
  *****************************************************************************/
 
+#define LOG_TAG "btm_acl"
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +51,7 @@
 #include "hcidefs.h"
 #include "hcimsgs.h"
 #include "l2c_int.h"
+#include "main/shim/dumpsys.h"
 #include "osi/include/osi.h"
 #include "device/include/interop_config.h"
 #include "btif_av_co.h"
@@ -322,8 +325,13 @@ void btm_acl_created(const RawAddress& bda, DEV_CLASS dc, BD_NAME bdn,
 
           const uint8_t req_pend = (p_dev_rec->sm4 & BTM_SM4_REQ_PEND);
 
-          /* Store the Peer Security Capabilites (in SM4 and rmt_sec_caps) */
-          btm_sec_set_peer_sec_caps(p, p_dev_rec);
+          bool ssp_supported =
+              HCI_SSP_HOST_SUPPORTED(p->peer_lmp_feature_pages[1]);
+          bool secure_connections_supported =
+              HCI_SC_HOST_SUPPORTED(p->peer_lmp_feature_pages[1]);
+          btm_sec_set_peer_sec_caps(hci_handle, ssp_supported,
+                                    secure_connections_supported);
+
 
           BTM_TRACE_API("%s: pend:%d", __func__, req_pend);
           if (req_pend) {
@@ -1114,8 +1122,12 @@ void btm_process_remote_ext_features(tACL_CONN* p_acl_cb,
   }
   const uint8_t req_pend = (p_dev_rec->sm4 & BTM_SM4_REQ_PEND);
 
-  /* Store the Peer Security Capabilites (in SM4 and rmt_sec_caps) */
-  btm_sec_set_peer_sec_caps(p_acl_cb, p_dev_rec);
+  bool ssp_supported =
+      HCI_SSP_HOST_SUPPORTED(p_acl_cb->peer_lmp_feature_pages[1]);
+  bool secure_connections_supported =
+      HCI_SC_HOST_SUPPORTED(p_acl_cb->peer_lmp_feature_pages[1]);
+  btm_sec_set_peer_sec_caps(handle, ssp_supported,
+                            secure_connections_supported);
 
   BTM_TRACE_API("%s: pend:%d", __func__, req_pend);
   if (req_pend) {
@@ -1396,6 +1408,16 @@ void btm_establish_continue(tACL_CONN* p_acl_cb) {
     if (btm_cb.btm_def_link_policy) {
       uint16_t btm_def_link_policy_local = btm_cb.btm_def_link_policy;
       BTM_SetLinkPolicy(p_acl_cb->remote_addr, &btm_def_link_policy_local);
+    }
+  } else if (p_acl_cb->transport == BT_TRANSPORT_LE) {
+    tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev(p_acl_cb->remote_addr);
+    if (p_dev_rec == nullptr) {
+      LOG_WARN(LOG_TAG, "No security record for %s",
+               PRIVATE_ADDRESS(p_acl_cb->remote_addr));
+    } else if (p_dev_rec->sec_flags & BTM_SEC_LE_LINK_KEY_KNOWN) {
+      btm_ble_set_encryption(
+          p_acl_cb->remote_addr, BTM_BLE_SEC_ENCRYPT,
+          p_dev_rec->role_master ? BTM_ROLE_MASTER : BTM_ROLE_SLAVE);
     }
   }
 #endif

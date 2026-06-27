@@ -511,6 +511,10 @@ typedef struct {
   LinkKey link_key;        /* Device link key                    */
   uint8_t pin_code_length; /* Length of the pin_code used for paring */
 
+ public:
+  RawAddress RemoteAddress() const { return bd_addr; }
+  uint16_t get_br_edr_hci_handle() const { return hci_handle; }
+
 #define BTM_SEC_AUTHORIZED BTM_SEC_FLAG_AUTHORIZED       /* 0x01 */
 #define BTM_SEC_AUTHENTICATED BTM_SEC_FLAG_AUTHENTICATED /* 0x02 */
 #define BTM_SEC_ENCRYPTED BTM_SEC_FLAG_ENCRYPTED         /* 0x04 */
@@ -553,6 +557,37 @@ typedef struct {
 #define BTM_SEC_STATE_DISCONNECTING_BOTH 9 /* disconnecting BR/EDR and BLE */
 
   uint8_t sec_state;  /* Operating state                    */
+  bool is_security_state_idle() const {
+    return sec_state == BTM_SEC_STATE_IDLE;
+  }
+  bool is_security_state_authenticating() const {
+    return sec_state == BTM_SEC_STATE_AUTHENTICATING;
+  }
+  bool is_security_state_encrypting() const {
+    return sec_state == BTM_SEC_STATE_ENCRYPTING;
+  }
+  bool is_security_state_getting_name() const {
+    return sec_state == BTM_SEC_STATE_GETTING_NAME;
+  }
+  bool is_security_state_authorizing() const {
+    return sec_state == BTM_SEC_STATE_AUTHORIZING;
+  }
+  bool is_security_state_switching_role() const {
+    return sec_state == BTM_SEC_STATE_SWITCHING_ROLE;
+  }
+  bool is_security_state_disconnecting() const {
+    return sec_state == BTM_SEC_STATE_DISCONNECTING;
+  }
+  bool is_security_state_wait_for_encryption() const {
+    return sec_state == BTM_SEC_STATE_DELAY_FOR_ENC;
+  }
+  bool is_security_state_ble_disconnecting() const {
+    return sec_state == BTM_SEC_STATE_DISCONNECTING_BLE;
+  }
+  bool is_security_state_br_edr_and_ble() const {
+    return sec_state == BTM_SEC_STATE_DISCONNECTING_BOTH;
+  }
+
   bool is_originator; /* true if device is originating connection */
 #if (L2CAP_UCD_INCLUDED == TRUE)
   bool is_ucd; /* true if device is sending or receiving UCD */
@@ -584,15 +619,39 @@ typedef struct {
   uint8_t sm4;                /* BTM_SM4_TRUE, if the peer supports SM4 */
   tBTM_IO_CAP rmt_io_caps;    /* IO capability of the peer device */
   tBTM_AUTH_REQ rmt_auth_req; /* the auth_req flag as in the IO caps rsp evt */
+
   bool remote_supports_secure_connections;
+  friend void btm_sec_set_peer_sec_caps(uint16_t hci_handle, bool ssp_supported,
+                                        bool sc_supported,
+                                        bool hci_role_switch_supported,
+                                        bool br_edr_supported,
+                                        bool le_supported);
+
+ public:
+  bool SupportsSecureConnections() const {
+    return remote_supports_secure_connections;
+  }
+
   bool remote_features_needed; /* set to true if the local device is in */
   /* "Secure Connections Only" mode and it receives */
   /* HCI_IO_CAPABILITY_REQUEST_EVT from the peer before */
   /* it knows peer's support for Secure Connections */
 
   uint16_t ble_hci_handle; /* use in DUMO connection */
+  uint16_t get_ble_hci_handle() const { return ble_hci_handle; }
+
   uint8_t enc_key_size;    /* current link encryption key size */
+  uint8_t get_encryption_key_size() const { return enc_key_size; }
+
   tBT_DEVICE_TYPE device_type;
+  bool is_device_type_br_edr() const {
+    return device_type == BT_DEVICE_TYPE_BREDR;
+  }
+  bool is_device_type_ble() const { return device_type == BT_DEVICE_TYPE_BLE; }
+  bool is_device_type_dual_mode() const {
+    return device_type == BT_DEVICE_TYPE_DUMO;
+  }
+
   bool new_encryption_key_is_p256; /* Set to true when the newly generated LK
                                    ** is generated from P-256.
                                    ** Link encrypted with such LK can be used
@@ -602,6 +661,14 @@ typedef struct {
                             /* work, i.e. link keys crosspairing */
                             /* SC BR/EDR->SC LE doesn't happen */
   tBTM_BOND_TYPE bond_type; /* peering bond type */
+  bool is_bond_type_unknown() const { return bond_type == BOND_TYPE_UNKNOWN; }
+  bool is_bond_type_persistent() const {
+    return bond_type == BOND_TYPE_PERSISTENT;
+  }
+  bool is_bond_type_temporary() const {
+    return bond_type == BOND_TYPE_TEMPORARY;
+  }
+
 
   tBTM_SEC_BLE ble;
   tBTM_LE_CONN_PRAMS conn_params;
@@ -617,6 +684,15 @@ typedef struct {
 #define BTM_SEC_RS_PENDING 1     /* Role Switch in progress */
 #define BTM_SEC_DISC_PENDING 2   /* Disconnect is pending */
   uint8_t rs_disc_pending;
+  bool is_role_switch_idle() const {
+    return rs_disc_pending == BTM_SEC_RS_NOT_PENDING;
+  }
+  bool is_role_switch_pending() const {
+    return rs_disc_pending == BTM_SEC_RS_PENDING;
+  }
+  bool is_role_switch_disconnecting() const {
+    return rs_disc_pending == BTM_SEC_DISC_PENDING;
+  }
   bool  process_existing_rnr; /* process the existing RNR */
 #endif
 #define BTM_SEC_NO_LAST_SERVICE_ID 0

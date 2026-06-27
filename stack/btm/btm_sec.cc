@@ -221,6 +221,109 @@ static bool btm_serv_trusted(tBTM_SEC_DEV_REC* p_dev_rec,
 
 /*******************************************************************************
  *
+ * Function         btm_sec_is_device_sc_downgrade
+ *
+ * Description      Check for a stored device record matching the candidate
+ *                  device, and return true if the stored device has reported
+ *                  that it supports Secure Connections mode and the candidate
+ *                  device reports that it does not.  Otherwise, return false.
+ *
+ * Returns          bool
+ *
+ ******************************************************************************/
+static bool btm_sec_is_device_sc_downgrade(uint16_t hci_handle,
+                                           bool secure_connections_supported) {
+  if (secure_connections_supported) return false;
+
+  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev_by_handle(hci_handle);
+  if (p_dev_rec == nullptr) return false;
+
+  uint8_t property_val = 0;
+  bt_property_t property = {
+      .type = BT_PROPERTY_REMOTE_SECURE_CONNECTIONS_SUPPORTED,
+      .len = sizeof(uint8_t),
+      .val = &property_val};
+
+  bt_status_t cached =
+      btif_storage_get_remote_device_property(&p_dev_rec->bd_addr, &property);
+
+  if (cached == BT_STATUS_FAIL) return false;
+
+  return (bool)property_val;
+}
+
+/*******************************************************************************
+ *
+ * Function         btm_sec_store_device_sc_support
+ *
+ * Description      Save Secure Connections support for this device to file
+ *
+ ******************************************************************************/
+
+static void btm_sec_store_device_sc_support(uint16_t hci_handle,
+                                            bool secure_connections_supported) {
+  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev_by_handle(hci_handle);
+  if (p_dev_rec == nullptr) return;
+
+  uint8_t property_val = (uint8_t)secure_connections_supported;
+  bt_property_t property = {
+      .type = BT_PROPERTY_REMOTE_SECURE_CONNECTIONS_SUPPORTED,
+      .len = sizeof(uint8_t),
+      .val = &property_val};
+
+  btif_storage_set_remote_device_property(&p_dev_rec->bd_addr, &property);
+}
+
+/*******************************************************************************
+ *
+ * Function         btm_sec_is_session_key_size_downgrade
+ *
+ * Description      Check if there is a stored device record matching this
+ *                  handle, and return true if the stored record has a lower
+ *                  session key size than the candidate device.
+ *
+ * Returns          bool
+ *
+ ******************************************************************************/
+bool btm_sec_is_session_key_size_downgrade(uint16_t hci_handle,
+                                           uint8_t key_size) {
+  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev_by_handle(hci_handle);
+  if (p_dev_rec == nullptr) return false;
+
+  uint8_t property_val = 0;
+  bt_property_t property = {.type = BT_PROPERTY_REMOTE_MAX_SESSION_KEY_SIZE,
+                            .len = sizeof(uint8_t),
+                            .val = &property_val};
+
+  bt_status_t cached =
+      btif_storage_get_remote_device_property(&p_dev_rec->bd_addr, &property);
+
+  if (cached == BT_STATUS_FAIL) return false;
+
+  return property_val > key_size;
+}
+
+/*******************************************************************************
+ *
+ * Function         btm_sec_update_session_key_size
+ *
+ * Description      Store the max session key size to disk, if possible.
+ *
+ ******************************************************************************/
+void btm_sec_update_session_key_size(uint16_t hci_handle, uint8_t key_size) {
+  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev_by_handle(hci_handle);
+  if (p_dev_rec == nullptr) return;
+
+  uint8_t property_val = key_size;
+  bt_property_t property = {.type = BT_PROPERTY_REMOTE_MAX_SESSION_KEY_SIZE,
+                            .len = sizeof(uint8_t),
+                            .val = &property_val};
+
+  btif_storage_set_remote_device_property(&p_dev_rec->bd_addr, &property);
+}
+
+/*******************************************************************************
+ *
  * Function         access_secure_service_from_temp_bond
  *
  * Description      a utility function to test whether an access to
@@ -625,7 +728,6 @@ static bool btm_sec_set_security_level(CONNECTION_TYPE conn_type,
           BTM_SEC_IN_MITM | BTM_SEC_IN_MIN_16_DIGIT_PIN);
 
     if (btm_cb.security_mode == BTM_SEC_MODE_SP ||
-        btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
         btm_cb.security_mode == BTM_SEC_MODE_SC) {
       if (sec_level & BTM_SEC_OUT_AUTHENTICATE) sec_level |= BTM_SEC_OUT_MITM;
     }
@@ -672,7 +774,6 @@ static bool btm_sec_set_security_level(CONNECTION_TYPE conn_type,
                    BTM_SEC_OUT_AUTHENTICATE | BTM_SEC_OUT_MITM);
 
     if (btm_cb.security_mode == BTM_SEC_MODE_SP ||
-        btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
         btm_cb.security_mode == BTM_SEC_MODE_SC) {
       if (sec_level & BTM_SEC_IN_AUTHENTICATE) sec_level |= BTM_SEC_IN_MITM;
     }
@@ -1102,7 +1203,6 @@ tBTM_STATUS btm_sec_bond_by_transport(const RawAddress& bd_addr,
     if (btm_sec_check_prefetch_pin(p_dev_rec)) return (BTM_CMD_STARTED);
   }
   if ((btm_cb.security_mode == BTM_SEC_MODE_SP ||
-       btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
        btm_cb.security_mode == BTM_SEC_MODE_SC) &&
       BTM_SEC_IS_SM4_UNKNOWN(p_dev_rec->sm4)) {
     /* local is 2.1 and peer is unknown */
@@ -1861,7 +1961,7 @@ bool BTM_PeerSupportsSecureConnections(const RawAddress& bd_addr) {
     return false;
   }
 
-  return (p_dev_rec->remote_supports_secure_connections);
+  return (p_dev_rec->SupportsSecureConnections());
 }
 
 /*******************************************************************************
@@ -2010,6 +2110,14 @@ static bool btm_sec_is_upgrade_possible(tBTM_SEC_DEV_REC* p_dev_rec,
        * If the application is configured to use a global MITM flag,
        * it probably would not want to upgrade the link key based on the
        * security level database */
+      is_possible = true;
+    }
+
+    /*if authentication is requirement & currently on temp bonding
+    * trigger pairing */
+    if ((p_dev_rec->security_required &
+        (is_originator ? BTM_SEC_OUT_AUTHENTICATE : BTM_SEC_IN_AUTHENTICATE)) &&
+        p_dev_rec->is_bond_type_temporary()) {
       is_possible = true;
     }
   }
@@ -2206,12 +2314,11 @@ tBTM_STATUS btm_sec_l2cap_access_req(const RawAddress& bd_addr, uint16_t psm,
         controller_get_interface()->supports_secure_connections();
     /* acceptor receives L2CAP Channel Connect Request for Secure Connections
      * Only service */
-    if (!(local_supports_sc) ||
-        !(p_dev_rec->remote_supports_secure_connections)) {
+    if (!(local_supports_sc) || !(p_dev_rec->SupportsSecureConnections())) {
       BTM_TRACE_DEBUG("%s: SC only service, local_support_for_sc %d",
-                      "rmt_support_for_sc : %d -> fail pairing", __func__,
+                      "rmt_support_for_sc : %s -> fail pairing", __func__,
                       local_supports_sc,
-                      p_dev_rec->remote_supports_secure_connections);
+                      logbool(p_dev_rec->SupportsSecureConnections()).c_str());
       if (p_callback)
         (*p_callback)(&bd_addr, transport, (void*)p_ref_data,
                       BTM_MODE4_LEVEL4_NOT_SUPPORTED);
@@ -2231,10 +2338,7 @@ tBTM_STATUS btm_sec_l2cap_access_req(const RawAddress& bd_addr, uint16_t psm,
     BTM_TRACE_EVENT("security_flags:x%x, sec_flags:x%x", security_required,
                     p_dev_rec->sec_flags);
     rc = BTM_CMD_STARTED;
-    if ((btm_cb.security_mode == BTM_SEC_MODE_UNDEFINED ||
-         btm_cb.security_mode == BTM_SEC_MODE_NONE ||
-         btm_cb.security_mode == BTM_SEC_MODE_SERVICE ||
-         btm_cb.security_mode == BTM_SEC_MODE_LINK) ||
+    if ((btm_cb.security_mode == BTM_SEC_MODE_SERVICE) ||
         (BTM_SM4_KNOWN == p_dev_rec->sm4) ||
         (BTM_SEC_IS_SM4(p_dev_rec->sm4) &&
          (btm_sec_is_upgrade_possible(p_dev_rec, is_originator) == false))) {
@@ -2312,7 +2416,6 @@ tBTM_STATUS btm_sec_l2cap_access_req(const RawAddress& bd_addr, uint16_t psm,
 
   /* Modify security_required in btm_sec_l2cap_access_req for Lisbon */
   if (btm_cb.security_mode == BTM_SEC_MODE_SP ||
-      btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
       btm_cb.security_mode == BTM_SEC_MODE_SC) {
     if (BTM_SEC_IS_SM4(p_dev_rec->sm4)) {
       if (is_originator) {
@@ -2386,10 +2489,7 @@ tBTM_STATUS btm_sec_l2cap_access_req(const RawAddress& bd_addr, uint16_t psm,
    * L2CAP connect
    * response is received */
   if (is_originator &&
-      ((btm_cb.security_mode == BTM_SEC_MODE_UNDEFINED ||
-        btm_cb.security_mode == BTM_SEC_MODE_NONE ||
-        btm_cb.security_mode == BTM_SEC_MODE_SERVICE ||
-        btm_cb.security_mode == BTM_SEC_MODE_LINK) ||
+      ((btm_cb.security_mode == BTM_SEC_MODE_SERVICE) ||
        !BTM_SEC_IS_SM4(p_dev_rec->sm4)) &&
       (psm >= 0x1001)) {
     BTM_TRACE_EVENT(
@@ -2554,10 +2654,7 @@ tBTM_STATUS btm_sec_mx_access_request(const RawAddress& bd_addr, uint16_t psm,
 
     rc = BTM_CMD_STARTED;
 
-    if ((btm_cb.security_mode == BTM_SEC_MODE_UNDEFINED ||
-         btm_cb.security_mode == BTM_SEC_MODE_NONE ||
-         btm_cb.security_mode == BTM_SEC_MODE_SERVICE ||
-         btm_cb.security_mode == BTM_SEC_MODE_LINK) ||
+    if ((btm_cb.security_mode == BTM_SEC_MODE_SERVICE) ||
         (BTM_SM4_KNOWN == p_dev_rec->sm4) ||
         (BTM_SEC_IS_SM4(p_dev_rec->sm4) &&
          (btm_sec_is_upgrade_possible(p_dev_rec, is_originator) == false))) {
@@ -2658,13 +2755,11 @@ tBTM_STATUS btm_sec_mx_access_request(const RawAddress& bd_addr, uint16_t psm,
         controller_get_interface()->supports_secure_connections();
     /* acceptor receives service connection establishment Request for */
     /* Secure Connections Only service */
-    if (!(local_supports_sc) ||
-        !(p_dev_rec->remote_supports_secure_connections)) {
+    if (!(local_supports_sc) || !(p_dev_rec->SupportsSecureConnections())) {
       BTM_TRACE_DEBUG("%s: SC only service,local_support_for_sc %d,",
                       "remote_support_for_sc %d: fail pairing", __func__,
                       local_supports_sc,
-                      p_dev_rec->remote_supports_secure_connections);
-
+                      p_dev_rec->SupportsSecureConnections());
       if (p_callback)
         (*p_callback)(&bd_addr, transport, (void*)p_ref_data,
                       BTM_MODE4_LEVEL4_NOT_SUPPORTED);
@@ -2677,7 +2772,6 @@ tBTM_STATUS btm_sec_mx_access_request(const RawAddress& bd_addr, uint16_t psm,
   p_dev_rec->security_required = security_required;
 
   if (btm_cb.security_mode == BTM_SEC_MODE_SP ||
-      btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
       btm_cb.security_mode == BTM_SEC_MODE_SC) {
     if (BTM_SEC_IS_SM4(p_dev_rec->sm4)) {
       if ((p_dev_rec->security_required & BTM_SEC_MODE4_LEVEL4) &&
@@ -3475,12 +3569,11 @@ void btm_io_capabilities_req(const RawAddress& p) {
     bool local_supports_sc =
         controller_get_interface()->supports_secure_connections();
     /* device in Secure Connections Only mode */
-    if (!(local_supports_sc) ||
-        !(p_dev_rec->remote_supports_secure_connections)) {
+    if (!(local_supports_sc) || !(p_dev_rec->SupportsSecureConnections())) {
       BTM_TRACE_DEBUG("%s: SC only service, local_support_for_sc %d,",
                       " remote_support_for_sc 0x%02x -> fail pairing", __func__,
                       local_supports_sc,
-                      p_dev_rec->remote_supports_secure_connections);
+                      p_dev_rec->SupportsSecureConnections());
 
       err_code = HCI_ERR_PAIRING_NOT_ALLOWED;
     }
@@ -4696,9 +4789,6 @@ void btm_sec_connected(const RawAddress& bda, uint16_t handle, uint8_t status,
     p_dev_rec->sec_flags |=
         ((BTM_SEC_AUTHENTICATED | BTM_SEC_ENCRYPTED) << bit_shift);
 
-  if (btm_cb.security_mode == BTM_SEC_MODE_LINK)
-    p_dev_rec->sec_flags |= (BTM_SEC_AUTHENTICATED << bit_shift);
-
   if (p_dev_rec->pin_code_length >= 16 ||
       p_dev_rec->link_key_type == BTM_LKEY_TYPE_AUTH_COMB ||
       p_dev_rec->link_key_type == BTM_LKEY_TYPE_AUTH_COMB_P_256) {
@@ -4965,6 +5055,13 @@ void btm_sec_link_key_notification(const RawAddress& p_bda,
     }
   }
 
+  if (p_dev_rec->is_bond_type_persistent() &&
+      (p_dev_rec->is_device_type_br_edr() ||
+       p_dev_rec->is_device_type_dual_mode())) {
+    btm_sec_store_device_sc_support(p_dev_rec->get_br_edr_hci_handle(),
+                                    p_dev_rec->SupportsSecureConnections());
+  }
+
   /* If name is not known at this point delay calling callback until the name is
    */
   /* resolved. Unless it is a HID Device and we really need to send all link
@@ -5083,7 +5180,8 @@ static void btm_sec_pairing_timeout(UNUSED_ATTR void* data) {
   p_dev_rec = btm_find_dev(p_cb->pairing_bda);
   tL2C_LCB *p_lcb = l2cu_find_lcb_by_bd_addr (p_cb->pairing_bda, BT_TRANSPORT_BR_EDR);
 
-  BTM_TRACE_EVENT("%s  State: %s   Flags: %u", __func__,
+  BTM_TRACE_WARNING("%s  State: %s   Flags: %u", __func__,
+
                   btm_pair_state_descr(p_cb->pairing_state),
                   p_cb->pairing_flags);
 
@@ -5154,6 +5252,10 @@ static void btm_sec_pairing_timeout(UNUSED_ATTR void* data) {
       break;
 
     case BTM_PAIR_STATE_WAIT_AUTH_COMPLETE:
+      if (btm_cb.pairing_flags & BTM_PAIR_FLAGS_LE_ACTIVE) {
+        SMP_PairCancel(p_cb->pairing_bda);
+      }
+      FALLTHROUGH_INTENDED;
     case BTM_PAIR_STATE_GET_REM_NAME:
       /* We need to notify the UI that timeout has happened while waiting for
        * authentication*/
@@ -5858,10 +5960,7 @@ uint32_t* BTM_ReadTrustedMask(const RawAddress& bd_addr) {
 static void btm_restore_mode(void) {
   if (btm_cb.security_mode_changed) {
     btm_cb.security_mode_changed = false;
-    BTM_TRACE_DEBUG("%s() Auth enable -> %d", __func__,
-                    (btm_cb.security_mode == BTM_SEC_MODE_LINK));
-    btsnd_hcic_write_auth_enable(
-        (uint8_t)(btm_cb.security_mode == BTM_SEC_MODE_LINK));
+    btsnd_hcic_write_auth_enable(false);
   }
 
   if (btm_cb.pin_type_changed) {
@@ -6156,15 +6255,26 @@ static bool btm_sec_queue_encrypt_request(const RawAddress& bd_addr,
  * Returns          void
  *
  ******************************************************************************/
-void btm_sec_set_peer_sec_caps(tACL_CONN* p_acl_cb,
-                               tBTM_SEC_DEV_REC* p_dev_rec) {
+void btm_sec_set_peer_sec_caps(uint16_t hci_handle, bool ssp_supported,
+                               bool sc_supported) {
+  tBTM_SEC_DEV_REC* p_dev_rec = btm_find_dev_by_handle(hci_handle);
+  if (p_dev_rec == nullptr) return;
+
+  // Drop the connection here if the remote attempts to downgrade from Secure
+  // Connections mode.
+  if (btm_sec_is_device_sc_downgrade(hci_handle, sc_supported)) {
+    btm_cb.acl_disc_reason = HCI_ERR_HOST_REJECT_SECURITY;
+    btm_sec_send_hci_disconnect(p_dev_rec, HCI_ERR_AUTH_FAILURE, hci_handle);
+    LOG_WARN(LOG_TAG, "Remote attempted to downgrade from Secure Connections mode");
+    return;
+  }
+
+  /* Store the Peer Security Capabilites (in SM4 and rmt_sec_caps) */
   if ((btm_cb.security_mode == BTM_SEC_MODE_SP ||
-       btm_cb.security_mode == BTM_SEC_MODE_SP_DEBUG ||
        btm_cb.security_mode == BTM_SEC_MODE_SC) &&
-      HCI_SSP_HOST_SUPPORTED(p_acl_cb->peer_lmp_feature_pages[1])) {
+      ssp_supported) {
     p_dev_rec->sm4 = BTM_SM4_TRUE;
-    p_dev_rec->remote_supports_secure_connections =
-        (HCI_SC_HOST_SUPPORTED(p_acl_cb->peer_lmp_feature_pages[1]));
+    p_dev_rec->remote_supports_secure_connections = sc_supported;
   } else {
     p_dev_rec->sm4 = BTM_SM4_KNOWN;
     p_dev_rec->remote_supports_secure_connections = false;
@@ -6172,7 +6282,7 @@ void btm_sec_set_peer_sec_caps(tACL_CONN* p_acl_cb,
 
   BTM_TRACE_API("%s: sm4: 0x%02x, rmt_support_for_secure_connections %d",
                 __func__, p_dev_rec->sm4,
-                p_dev_rec->remote_supports_secure_connections);
+                p_dev_rec->SupportsSecureConnections());
 
   if (p_dev_rec->remote_features_needed) {
     BTM_TRACE_EVENT(
